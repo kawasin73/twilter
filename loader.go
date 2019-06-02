@@ -1,6 +1,7 @@
 package twilter
 
 import (
+	"context"
 	"github.com/dghubble/go-twitter/twitter"
 	"time"
 )
@@ -13,7 +14,6 @@ const (
 
 // Loader loads all tweets and filters tweets.
 type Loader struct {
-	client       *twitter.Client
 	targetId     string
 	size         int
 	maxIteration int
@@ -28,7 +28,7 @@ type LoaderOption struct {
 }
 
 // NewLoader returns Loader
-func NewLoader(client *twitter.Client, targetId string, option *LoaderOption) *Loader {
+func NewLoader(targetId string, option *LoaderOption) *Loader {
 	// set default options
 	if option == nil {
 		option = new(LoaderOption)
@@ -44,7 +44,6 @@ func NewLoader(client *twitter.Client, targetId string, option *LoaderOption) *L
 	}
 
 	return &Loader{
-		client:       client,
 		targetId:     targetId,
 		size:         option.Size,
 		maxIteration: option.MaxIteration,
@@ -58,7 +57,7 @@ func NewLoader(client *twitter.Client, targetId string, option *LoaderOption) *L
 // return : `tweets`  : filtered tweets by Loader.filters which order is new to old
 // return : `latest`  : lastest tweet. nil when no new tweet found.
 // return : `err`     : error from UserTimeline API
-func (l *Loader) Load(sinceId int64, filters []Filter) (tweets []twitter.Tweet, latest *twitter.Tweet, err error) {
+func (l *Loader) Load(ctx context.Context, client *twitter.Client, sinceId int64, filters []Filter) (tweets []twitter.Tweet, latest *twitter.Tweet, err error) {
 	var (
 		trueValue        = true
 		falseValue       = false
@@ -71,7 +70,7 @@ totalLoop:
 		var timeline []twitter.Tweet
 		// Get tweets of the user
 		// https://developer.twitter.com/en/docs/tweets/timelines/api-reference/get-statuses-user_timeline.html
-		timeline, _, err = l.client.Timelines.UserTimeline(&twitter.UserTimelineParams{
+		timeline, _, err = client.Timelines.UserTimeline(&twitter.UserTimelineParams{
 			ScreenName:      l.targetId,
 			TrimUser:        &trueValue,
 			IncludeRetweets: &trueValue,
