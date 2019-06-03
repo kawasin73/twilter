@@ -14,7 +14,8 @@ const (
 
 // Loader loads all tweets and filters tweets.
 type Loader struct {
-	targetId     string
+	screenName   string
+	userId       int64
 	size         int
 	maxIteration int
 	limitInital  time.Duration
@@ -27,8 +28,17 @@ type LoaderOption struct {
 	LimitInital  time.Duration
 }
 
-// NewLoader returns Loader
-func NewLoader(targetId string, option *LoaderOption) *Loader {
+// NewLoaderScreenName returns Loader for screenName (string)
+func NewLoaderScreenName(screenName string, option *LoaderOption) *Loader {
+	return newLoader(screenName, 0, option)
+}
+
+// NewLoader returns Loader for userId (int64)
+func NewLoader(userId int64, option *LoaderOption) *Loader {
+	return newLoader("", userId, option)
+}
+
+func newLoader(screenName string, userId int64, option *LoaderOption) *Loader {
 	// set default options
 	if option == nil {
 		option = new(LoaderOption)
@@ -44,7 +54,8 @@ func NewLoader(targetId string, option *LoaderOption) *Loader {
 	}
 
 	return &Loader{
-		targetId:     targetId,
+		screenName:   screenName,
+		userId:       userId,
 		size:         option.Size,
 		maxIteration: option.MaxIteration,
 		limitInital:  option.LimitInital,
@@ -71,7 +82,8 @@ totalLoop:
 		// Get tweets of the user
 		// https://developer.twitter.com/en/docs/tweets/timelines/api-reference/get-statuses-user_timeline.html
 		timeline, _, err = client.Timelines.UserTimeline(&twitter.UserTimelineParams{
-			ScreenName:      l.targetId,
+			ScreenName:      l.screenName,
+			UserID:          l.userId,
 			TrimUser:        &trueValue,
 			IncludeRetweets: &trueValue,
 			ExcludeReplies:  &falseValue,
