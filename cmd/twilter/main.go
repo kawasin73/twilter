@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
@@ -10,9 +11,62 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"time"
 )
+
+type target struct {
+	screenName string
+	filters    []twilter.Filter
+}
+
+type targetValue map[string]*target
+
+func (tv targetValue) String() string {
+	return "target values"
+}
+
+func (tv targetValue) Set(value string) error {
+	// get screen_name
+	idx := strings.Index(value, ":")
+	if idx < 0 {
+		return fmt.Errorf("target has no screenName nor filter")
+	}
+	screenName := value[:idx]
+
+	// get filters
+	var filters []twilter.Filter
+	value = value[idx+1:]
+	values := strings.Split(value, "/")
+	for _, v := range values {
+		// parse each filter
+		switch {
+		case v == "photo":
+			filters = append(filters, twilter.PhotoFilter{})
+		case v == "video":
+			filters = append(filters, twilter.VideoFilter{})
+		default:
+			// filter is invalid
+			return fmt.Errorf("filter \"%v\" is invalid", v)
+		}
+	}
+
+	// get target
+	t, ok := tv[screenName]
+	if !ok {
+		// create new target
+		t = &target{
+			screenName: screenName,
+		}
+		tv[screenName] = t
+	}
+
+	// set filters
+	t.filters = append(t.filters, filters...)
+
+	return nil
+}
 
 func main() {
 	var (
@@ -20,38 +74,49 @@ func main() {
 		consumerSecret = os.Getenv("TWITTER_CONSUMER_SECRET")
 		accessToken    = os.Getenv("TWITTER_ACCESS_TOKEN")
 		accessSecret   = os.Getenv("TWITTER_ACCESS_TOKEN_SECRET")
-		wg             sync.WaitGroup
-		duration       = time.Minute
-		limitInital    = 48 * time.Hour
 	)
+
+	// setup command line option flags
+	flagTargets := make(targetValue)
+	flagInterval := flag.Int("interval", 10, "interval between monitoring (minutes)")
+	flagFallback := flag.Int("fallback", 10, "start filtering tweets fallback minutes ago if no checkpoint (minutes)")
+	flagTimeout := flag.Int("timeout", 5, "timeout for each monitoring + retweet loop (minutes)")
+	flag.Var(flagTargets, "target", "list of targets. target format = \"<screen_name>:<filter>[/<filter>]\"  filter format = \"<filter_name>[(<attribute>[,<attribute>])]\"")
+	flagRedis := flag.String("redis", "", "redis url (optional)")
+
+	flag.Parse()
+
+	// convert parsed flags
+	interval := time.Duration(*flagInterval) * time.Minute
+	fallback := time.Duration(*flagFallback) * time.Minute
+	timeout := time.Duration(*flagTimeout) * time.Minute
+	_ = flagRedis
+
+	// setup wait group
+	var wg sync.WaitGroup
 	defer wg.Wait()
 
+	// setup context
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// TODO: create task from config and multi task
-	// create Task
+	// create twitter auth context
 	config := oauth1.NewConfig(consumerKey, consumerSecret)
 	token := oauth1.NewToken(accessToken, accessSecret)
-	loader := twilter.NewLoaderScreenName("kawasin73", &twilter.LoaderOption{LimitInital: limitInital})
-	filters := []twilter.Filter{twilter.PhotoFilter{}}
-	task := Task{
-		oauthConfig: config,
-		oauthToken:  token,
-		loader:      loader,
-		latestId:    0,
-		filters:     filters,
-		interval:    duration,
-		timeout:     2 * time.Minute,
-	}
 
+	// setup scheduler
 	sche := htask.NewScheduler(&wg, 0)
 	defer sche.Close()
 
-	// start task.
-	err := task.Start(ctx, sche)
-	if err != nil {
-		log.Panic(err)
+	for _, t := range flagTargets {
+		// create task
+		task := setupTask(t, config,token, interval, timeout, fallback)
+
+		// start task.
+		err := task.Start(ctx, sche)
+		if err != nil {
+			log.Panic(err)
+		}
 	}
 
 	// setup signal.
@@ -66,6 +131,23 @@ func main() {
 		// signal (SIGINT) has come.
 		log.Println("shutdown...")
 	}
+}
+
+func setupTask(t *target, config *oauth1.Config, token *oauth1.Token, interval, timeout, fallback time.Duration) *Task {
+	loader := twilter.NewLoaderScreenName(t.screenName, &twilter.LoaderOption{Fallback: fallback})
+	task := &Task{
+		oauthConfig: config,
+		oauthToken:  token,
+		loader:      loader,
+		latestId:    0,
+		filters:     t.filters,
+		interval:    interval,
+		timeout:     timeout,
+	}
+
+	// TODO: set latestId from Redis
+
+	return task
 }
 
 type Task struct {

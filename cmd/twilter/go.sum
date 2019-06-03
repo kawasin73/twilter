@@ -18,3 +18,5 @@ github.com/kawasin73/twilter v0.0.0-20190603074952-5cecbc2315af h1:VDb68CjEMfoXT
 github.com/kawasin73/twilter v0.0.0-20190603074952-5cecbc2315af/go.mod h1:m06A2Ftwb6Cd9Rx5p+FMuheR9RJnWkLk2OzzoYABqyw=
 github.com/kawasin73/twilter v0.0.0-20190603131122-4e8ce1d1990f h1:SwCFrmsqlpyV/4EuyVVMmlkDYnAVlVqQk5ACAdCd6yU=
 github.com/kawasin73/twilter v0.0.0-20190603131122-4e8ce1d1990f/go.mod h1:m06A2Ftwb6Cd9Rx5p+FMuheR9RJnWkLk2OzzoYABqyw=
+github.com/kawasin73/twilter v0.0.0-20190603143325-aa3ac1ff3622 h1:xyH2YmFilKgxbF7pJVKJc1cY/+xlPFFibinILDQlF68=
+github.com/kawasin73/twilter v0.0.0-20190603143325-aa3ac1ff3622/go.mod h1:m06A2Ftwb6Cd9Rx5p+FMuheR9RJnWkLk2OzzoYABqyw=
