@@ -121,10 +121,7 @@ totalLoop:
 
 			// check filters matches or not.
 			for _, f := range filters {
-				if f.NotMatch(&timeline[i]) {
-					// break filters loop and check next tweet
-					break
-				} else if f.Match(&timeline[i]) {
+				if f.Match(&timeline[i]) {
 					// copy tweet to result array
 					// not set pointer because timeline will not be GCed when next timeline search.
 					tweets = append(tweets, timeline[i])
