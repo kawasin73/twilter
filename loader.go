@@ -2,7 +2,9 @@ package twilter
 
 import (
 	"context"
+	"fmt"
 	"github.com/dghubble/go-twitter/twitter"
+	"net/http"
 	"time"
 )
 
@@ -78,10 +80,13 @@ func (l *Loader) Load(ctx context.Context, client *twitter.Client, sinceId int64
 	// 3200 tweets is available on User Timeline API at the most
 totalLoop:
 	for r := 0; r < l.maxIteration; r++ {
-		var timeline []twitter.Tweet
+		var (
+			timeline []twitter.Tweet
+			resp     *http.Response
+		)
 		// Get tweets of the user
 		// https://developer.twitter.com/en/docs/tweets/timelines/api-reference/get-statuses-user_timeline.html
-		timeline, _, err = client.Timelines.UserTimeline(&twitter.UserTimelineParams{
+		timeline, resp, err = client.Timelines.UserTimeline(&twitter.UserTimelineParams{
 			ScreenName:      l.screenName,
 			UserID:          l.userId,
 			TrimUser:        &trueValue,
@@ -92,9 +97,12 @@ totalLoop:
 			Count:           l.size,
 		})
 
+		// TODO: check rate limit error and continue
 		if err != nil {
-			// TODO: check rate limit error and continue
 			return nil, nil, err
+		} else if resp.StatusCode >= 300 {
+			// twitter.APIError is not reliable when error response body format from twitter is not valid.
+			return nil, nil, fmt.Errorf("request to user timeline : %v", resp.Status)
 		}
 
 		// set latest tweet
