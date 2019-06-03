@@ -11,7 +11,7 @@ import (
 const (
 	defaultSize      = 200
 	defaultIteration = 16
-	defaultLimit     = time.Hour
+	defaultFallback  = time.Hour
 )
 
 // Loader loads all tweets and filters tweets.
@@ -20,14 +20,14 @@ type Loader struct {
 	userId       int64
 	size         int
 	maxIteration int
-	limitInital  time.Duration
+	fallback     time.Duration
 }
 
 // LoaderOption ...
 type LoaderOption struct {
 	Size         int
 	MaxIteration int
-	LimitInital  time.Duration
+	Fallback     time.Duration
 }
 
 // NewLoaderScreenName returns Loader for screenName (string)
@@ -51,8 +51,8 @@ func newLoader(screenName string, userId int64, option *LoaderOption) *Loader {
 	if option.MaxIteration == 0 {
 		option.MaxIteration = defaultIteration
 	}
-	if option.LimitInital == 0 {
-		option.LimitInital = defaultLimit
+	if option.Fallback == 0 {
+		option.Fallback = defaultFallback
 	}
 
 	return &Loader{
@@ -60,7 +60,7 @@ func newLoader(screenName string, userId int64, option *LoaderOption) *Loader {
 		userId:       userId,
 		size:         option.Size,
 		maxIteration: option.MaxIteration,
-		limitInital:  option.LimitInital,
+		fallback:     option.Fallback,
 	}
 }
 
@@ -112,8 +112,8 @@ totalLoop:
 
 		for i := range timeline {
 			if sinceId == 0 {
-				// check whether tweet is older than limit.
-				if createdAt, err := timeline[i].CreatedAtTime(); err == nil && time.Now().Add(-l.limitInital).After(createdAt) {
+				// check whether tweet is older than fallback.
+				if createdAt, err := timeline[i].CreatedAtTime(); err == nil && time.Now().Add(-l.fallback).After(createdAt) {
 					// finish traversing.
 					break totalLoop
 				}
