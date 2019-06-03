@@ -16,6 +16,69 @@ import (
 	"time"
 )
 
+func unwrapArgs(args string) (string, error) {
+	// remove ( and )
+	if len(args) < 3 || args[0] != '(' || args[len(args)-1] != ')' {
+		return "", fmt.Errorf("args not have ()")
+	}
+	return args[1:len(args)-1], nil
+}
+
+func parseFilters(value string, sep string) ([]twilter.Filter, error) {
+	// parse multi filters separated by sep
+	values := strings.Split(value, sep)
+	var filters []twilter.Filter
+	for _, v := range values {
+		filter, err := parseFilter(v)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, filter)
+	}
+	return filters, nil
+}
+
+func parseFilter(value string) (twilter.Filter, error) {
+	// parse each filter
+	switch {
+	case value == "photo":
+		return twilter.PhotoFilter{}, nil
+	case value == "video":
+		return twilter.VideoFilter{}, nil
+	case value == "rt":
+		return twilter.RTFilter{}, nil
+	case strings.HasPrefix(value, "not"):
+		args, err := unwrapArgs(value[3:])
+		if err != nil {
+			return nil, err
+		}
+		filter, err := parseFilter(args)
+		if err != nil {
+			return nil, err
+		}
+		return twilter.NotFilter{filter}, nil
+	case strings.HasPrefix(value, "and"):
+		if args, err := unwrapArgs(value[3:]); err != nil {
+			return nil, err
+		} else if filters, err := parseFilters(args, ","); err != nil {
+			return nil, err
+		} else {
+			return twilter.AndFilter{filters}, nil
+		}
+	case strings.HasPrefix(value, "or"):
+		if args, err := unwrapArgs(value[2:]); err != nil {
+			return nil, err
+		} else if filters, err := parseFilters(args, ","); err != nil {
+			return nil, err
+		} else {
+			return twilter.AndFilter{filters}, nil
+		}
+	default:
+		// filter is invalid
+		return nil, fmt.Errorf("filter \"%v\" is invalid", value)
+	}
+}
+
 type target struct {
 	screenName string
 	filters    []twilter.Filter
@@ -36,20 +99,9 @@ func (tv targetValue) Set(value string) error {
 	screenName := value[:idx]
 
 	// get filters
-	var filters []twilter.Filter
-	value = value[idx+1:]
-	values := strings.Split(value, "/")
-	for _, v := range values {
-		// parse each filter
-		switch {
-		case v == "photo":
-			filters = append(filters, twilter.PhotoFilter{})
-		case v == "video":
-			filters = append(filters, twilter.VideoFilter{})
-		default:
-			// filter is invalid
-			return fmt.Errorf("filter \"%v\" is invalid", v)
-		}
+	filters, err := parseFilters(value[idx+1:], "/")
+	if err != nil {
+		return err
 	}
 
 	// get target
@@ -110,7 +162,7 @@ func main() {
 
 	for _, t := range flagTargets {
 		// create task
-		task := setupTask(t, config,token, interval, timeout, fallback)
+		task := setupTask(t, config, token, interval, timeout, fallback)
 
 		// start task.
 		err := task.Start(ctx, sche)
