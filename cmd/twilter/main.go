@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
+	"github.com/go-redis/redis"
 	"github.com/kawasin73/htask"
 	"github.com/kawasin73/twilter"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +24,7 @@ func unwrapArgs(args string) (string, error) {
 	if len(args) < 3 || args[0] != '(' || args[len(args)-1] != ')' {
 		return "", fmt.Errorf("args not have ()")
 	}
-	return args[1:len(args)-1], nil
+	return args[1 : len(args)-1], nil
 }
 
 func parseFilters(value string, sep string) ([]twilter.Filter, error) {
@@ -120,12 +123,43 @@ func (tv targetValue) Set(value string) error {
 	return nil
 }
 
+func setupRedis(redisUrl string) (*redis.Client, error) {
+	// if empty then no redis mode
+	if redisUrl == "" {
+		return nil, nil
+	}
+
+	// parse redis url
+	u, err := url.Parse(redisUrl)
+	if err != nil {
+		log.Fatal("parse redis url : ", err)
+	}
+	redisPassword, _ := u.User.Password()
+
+	// create redis client
+	redisDB := 0
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:     u.Host,
+		Password: redisPassword,
+		DB:       redisDB,
+	})
+
+	// ping to redis server
+	if err = redisClient.Ping().Err(); err != nil {
+		_ = redisClient.Close()
+		return nil, fmt.Errorf("ping to redis : %v", err)
+	}
+
+	return redisClient, nil
+}
+
 func main() {
 	var (
 		consumerKey    = os.Getenv("TWITTER_CONSUMER_KEY")
 		consumerSecret = os.Getenv("TWITTER_CONSUMER_SECRET")
 		accessToken    = os.Getenv("TWITTER_ACCESS_TOKEN")
 		accessSecret   = os.Getenv("TWITTER_ACCESS_TOKEN_SECRET")
+		redisUrl       = os.Getenv("REDIS_URL")
 	)
 
 	// setup command line option flags
@@ -152,6 +186,15 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// setup redis client
+	redisClient, err := setupRedis(redisUrl)
+	if err != nil {
+		log.Panic("failed to setup redis client :", err)
+	} else if redisClient != nil {
+		log.Println("redis is enabled")
+		defer redisClient.Close()
+	}
+
 	// create twitter auth context
 	config := oauth1.NewConfig(consumerKey, consumerSecret)
 	token := oauth1.NewToken(accessToken, accessSecret)
@@ -162,12 +205,15 @@ func main() {
 
 	for _, t := range flagTargets {
 		// create task
-		task := setupTask(t, config, token, interval, timeout, fallback)
+		task, err := setupTask(ctx, config, token, redisClient, t, interval, timeout, fallback)
+		if err != nil {
+			log.Panic("failed to create task :", err)
+		}
 
 		// start task.
-		err := task.Start(ctx, sche)
+		err = task.Start(ctx, sche)
 		if err != nil {
-			log.Panic(err)
+			log.Panic("failed to start task", err)
 		}
 	}
 
@@ -185,31 +231,87 @@ func main() {
 	}
 }
 
-func setupTask(t *target, config *oauth1.Config, token *oauth1.Token, interval, timeout, fallback time.Duration) *Task {
-	loader := twilter.NewLoaderScreenName(t.screenName, &twilter.LoaderOption{Fallback: fallback})
-	task := &Task{
-		oauthConfig: config,
-		oauthToken:  token,
-		loader:      loader,
-		latestId:    0,
-		filters:     t.filters,
-		interval:    interval,
-		timeout:     timeout,
+type idStore struct {
+	client   *redis.Client
+	targetId string
+	latestId int64
+}
+
+func createIdStore(client *redis.Client, targetId int64) (*idStore, error) {
+	targetIdStr := strconv.FormatInt(targetId, 10)
+	var latestId int64
+	if client != nil {
+		// get latest id from redis store
+		var err error
+		if latestId, err = client.Get(targetIdStr).Int64(); err != nil && err != redis.Nil {
+			return nil, err
+		}
 	}
+	return &idStore{
+		client:   client,
+		targetId: targetIdStr,
+		latestId: latestId,
+	}, nil
+}
 
-	// TODO: set latestId from Redis
+func (l *idStore) update(latestId int64) error {
+	l.latestId = latestId
+	if l.client == nil {
+		return nil
+	}
+	return l.client.Set(l.targetId, latestId, 0).Err()
+}
 
-	return task
+func (l *idStore) get() int64 {
+	return l.latestId
 }
 
 type Task struct {
 	oauthConfig *oauth1.Config
 	oauthToken  *oauth1.Token
 	loader      *twilter.Loader
-	latestId    int64
+	idStore     *idStore
 	filters     []twilter.Filter
 	interval    time.Duration
 	timeout     time.Duration
+}
+
+func setupTask(ctx context.Context, config *oauth1.Config, token *oauth1.Token, redisClient *redis.Client, t *target, interval, timeout, fallback time.Duration) (*Task, error) {
+	// initialize task
+	task := &Task{
+		oauthConfig: config,
+		oauthToken:  token,
+		filters:     t.filters,
+		interval:    interval,
+		timeout:     timeout,
+	}
+
+	// convert screenName to userId
+	falseValue := false
+	twitterClient := task.twitterClient(ctx)
+	user, resp, err := twitterClient.Users.Show(&twitter.UserShowParams{
+		ScreenName:      t.screenName,
+		IncludeEntities: &falseValue,
+	})
+	if err == nil && resp.StatusCode >= 300 {
+		err = fmt.Errorf("request to show user : %v", resp.Status)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("convert screenName to userId : %v", err)
+	}
+	targetId := user.ID
+
+	// create loader
+	task.loader = twilter.NewLoader(targetId, &twilter.LoaderOption{Fallback: fallback})
+
+	// load latestId from Redis
+	is, err := createIdStore(redisClient, targetId)
+	if err != nil {
+		return nil, fmt.Errorf("create id store : %v", err)
+	}
+	task.idStore = is
+
+	return task, nil
 }
 
 func (t *Task) Start(ctx context.Context, sche *htask.Scheduler) error {
@@ -225,6 +327,11 @@ func (t *Task) buildTask(ctx context.Context, sche *htask.Scheduler) func(_ time
 	}
 }
 
+func (t *Task) twitterClient(ctx context.Context) *twitter.Client {
+	httpClient := t.oauthConfig.Client(ctx, t.oauthToken)
+	return twitter.NewClient(httpClient)
+}
+
 func (t *Task) Exec(ctx context.Context) {
 	log.Println("start loading...")
 	// set timeout to context
@@ -232,11 +339,10 @@ func (t *Task) Exec(ctx context.Context) {
 	defer cancel()
 
 	// setup twitter client
-	httpClient := t.oauthConfig.Client(tctx, t.oauthToken)
-	client := twitter.NewClient(httpClient)
+	client := t.twitterClient(tctx)
 
 	// load tweets
-	tweets, latest, err := t.loader.Load(tctx, client, t.latestId, t.filters)
+	tweets, latest, err := t.loader.Load(tctx, client, t.idStore.get(), t.filters)
 	if err != nil {
 		log.Println("failed to load tweets :", err)
 		return
@@ -291,13 +397,15 @@ func (t *Task) Exec(ctx context.Context) {
 		}
 
 		// update latestId
-		t.latestId = tw.ID
-		// TODO: save to persistent layer
+		if err = t.idStore.update(tw.ID); err != nil {
+			log.Println("failed to save latest id :", err)
+		}
 	}
 
 	// update latestId
 	if latest != nil {
-		t.latestId = latest.ID
-		// TODO: save to persistent layer
+		if err = t.idStore.update(latest.ID); err != nil {
+			log.Println("failed to save latest id :", err)
+		}
 	}
 }
