@@ -90,7 +90,11 @@ type target struct {
 type targetValue map[string]*target
 
 func (tv targetValue) String() string {
-	return "target values"
+	str := ""
+	for name, t := range tv {
+		str += fmt.Sprintf("%s:%v,", name, t.filters)
+	}
+	return str
 }
 
 func (tv targetValue) Set(value string) error {

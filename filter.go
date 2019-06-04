@@ -15,9 +15,9 @@ type Filter interface {
 // AllFilter pass all tweets.
 type AllFilter struct{}
 
-// String returns All
+// String returns all
 func (_ AllFilter) String() string {
-	return "All"
+	return "all"
 }
 
 // Match always returns true
@@ -47,9 +47,9 @@ func (_ PhotoFilter) Match(tweet *twitter.Tweet) bool {
 	return false
 }
 
-// String returns Photo
+// String returns photo
 func (_ PhotoFilter) String() string {
-	return "Photo"
+	return "photo"
 }
 
 // VideoFilter filters video tweets
@@ -74,9 +74,9 @@ func (_ VideoFilter) Match(tweet *twitter.Tweet) bool {
 	return false
 }
 
-// String returns Video
+// String returns video
 func (_ VideoFilter) String() string {
-	return "Video"
+	return "video"
 }
 
 // RTFilter filters retweeted tweets
@@ -87,9 +87,9 @@ func (_ RTFilter) Match(tweet *twitter.Tweet) bool {
 	return tweet.RetweetedStatus != nil
 }
 
-// String returns RT
+// String returns rt
 func (_ RTFilter) String() string {
-	return "RT"
+	return "rt"
 }
 
 // QTFilter filters quoted tweets
@@ -100,9 +100,9 @@ func (_ QTFilter) Match(tweet *twitter.Tweet) bool {
 	return tweet.QuotedStatusID > 0
 }
 
-// String returns QT
+// String returns qt
 func (_ QTFilter) String() string {
-	return "QT"
+	return "qt"
 }
 
 // NotFilter return toggled result of Origin
@@ -115,9 +115,9 @@ func (f NotFilter) Match(tweet *twitter.Tweet) bool {
 	return !f.Original.Match(tweet)
 }
 
-// String returns Not
+// String returns not
 func (f NotFilter) String() string {
-	return fmt.Sprintf("Not(%v)", f.Original)
+	return fmt.Sprintf("not(%v)", f.Original)
 }
 
 // AndFilter return AND result of all filters
@@ -138,13 +138,13 @@ func (f AndFilter) Match(tweet *twitter.Tweet) bool {
 	return true
 }
 
-// String returns And
+// String returns and
 func (f AndFilter) String() string {
 	ss := make([]string, len(f.Filters))
 	for i, ff := range f.Filters {
 		ss[i] = ff.String()
 	}
-	return fmt.Sprintf("And(%v)", strings.Join(ss, ","))
+	return fmt.Sprintf("and(%v)", strings.Join(ss, ","))
 }
 
 // OrFilter return OR result of all filters
@@ -165,11 +165,11 @@ func (f OrFilter) Match(tweet *twitter.Tweet) bool {
 	return false
 }
 
-// String returns Or
+// String returns or
 func (f OrFilter) String() string {
 	ss := make([]string, len(f.Filters))
 	for i, ff := range f.Filters {
 		ss[i] = ff.String()
 	}
-	return fmt.Sprintf("Or(%v)", strings.Join(ss, ","))
+	return fmt.Sprintf("or(%v)", strings.Join(ss, ","))
 }
