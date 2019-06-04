@@ -84,8 +84,10 @@ totalLoop:
 			timeline []twitter.Tweet
 			resp     *http.Response
 		)
+
 		// Get tweets of the user
 		// https://developer.twitter.com/en/docs/tweets/timelines/api-reference/get-statuses-user_timeline.html
+	retry:
 		timeline, resp, err = client.Timelines.UserTimeline(&twitter.UserTimelineParams{
 			ScreenName:      l.screenName,
 			UserID:          l.userId,
@@ -97,12 +99,25 @@ totalLoop:
 			Count:           l.size,
 		})
 
-		// TODO: check rate limit error and continue
+		// check rate limited
+		if limited, sleep := IsRateLimit(resp); limited {
+			timer := time.NewTimer(sleep)
+			select {
+			case <-timer.C:
+				// sleep and retry
+				goto retry
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, nil, ctx.Err()
+			}
+		}
+
+		// twitter.APIError is not reliable when error response body format from twitter is not valid.
+		if err == nil && resp.StatusCode >= 300 {
+			err = fmt.Errorf("request to user timeline : %v", resp.Status)
+		}
 		if err != nil {
 			return nil, nil, err
-		} else if resp.StatusCode >= 300 {
-			// twitter.APIError is not reliable when error response body format from twitter is not valid.
-			return nil, nil, fmt.Errorf("request to user timeline : %v", resp.Status)
 		}
 
 		// set latest tweet

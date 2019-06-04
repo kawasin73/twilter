@@ -35,10 +35,26 @@ func setupTask(ctx context.Context, config *oauth1.Config, token *oauth1.Token, 
 	// convert screenName to userId
 	falseValue := false
 	twitterClient := task.twitterClient(ctx)
+retry:
 	user, resp, err := twitterClient.Users.Show(&twitter.UserShowParams{
 		ScreenName:      t.screenName,
 		IncludeEntities: &falseValue,
 	})
+
+	// check rate limited
+	if limited, sleep := twilter.IsRateLimit(resp); limited {
+		timer := time.NewTimer(sleep)
+		select {
+		case <-timer.C:
+			// sleep and retry
+			goto retry
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		}
+	}
+
+	// twitter.APIError is not reliable when error response body format from twitter is not valid.
 	if err == nil && resp.StatusCode >= 300 {
 		err = fmt.Errorf("request to show user : %v", resp.Status)
 	}
@@ -106,11 +122,28 @@ func (t *Task) Exec(ctx context.Context) {
 			// if already retweeted then unretweet and retweet again.
 			// TODO: handle rate limit error
 			log.Printf("tweet (%d) is already retweeted. so unretweet.\n", tw.ID)
+
+		retryUnretweet:
 			_, resp, err := client.Statuses.Unretweet(tw.ID, &twitter.StatusUnretweetParams{
 				TrimUser: &trueValue,
 			})
+
+			// check rate limited
+			if limited, sleep := twilter.IsRateLimit(resp); limited {
+				timer := time.NewTimer(sleep)
+				select {
+				case <-timer.C:
+					// sleep and retry
+					goto retryUnretweet
+				case <-ctx.Done():
+					timer.Stop()
+					log.Println("unretweet timeout")
+					return
+				}
+			}
+
+			// twitter.APIError is not reliable when error response body format from twitter is not valid.
 			if err == nil && resp.StatusCode >= 300 {
-				// twitter.APIError is not reliable when error response body format from twitter is not valid.
 				err = fmt.Errorf("request to unretweet : %v", resp.Status)
 			}
 			// even if the tweet is not retweeted, no error occurs.
@@ -121,15 +154,29 @@ func (t *Task) Exec(ctx context.Context) {
 		}
 
 		// retweet
+	retryRetweet:
 		_, resp, err := client.Statuses.Retweet(tw.ID, &twitter.StatusRetweetParams{
 			TrimUser: &trueValue,
 		})
-		// TODO: handle rate limit error
-		if err == nil && resp.StatusCode >= 300 {
-			// twitter.APIError is not reliable when error response body format from twitter is not valid.
-			err = fmt.Errorf("request to retweet : %v", resp.Status)
+
+		// check rate limited
+		if limited, sleep := twilter.IsRateLimit(resp); limited {
+			timer := time.NewTimer(sleep)
+			select {
+			case <-timer.C:
+				// sleep and retry
+				goto retryRetweet
+			case <-ctx.Done():
+				timer.Stop()
+				log.Println("retweet timeout")
+				return
+			}
 		}
 
+		// twitter.APIError is not reliable when error response body format from twitter is not valid.
+		if err == nil && resp.StatusCode >= 300 {
+			err = fmt.Errorf("request to retweet : %v", resp.Status)
+		}
 		if err != nil {
 			if twilter.IsAlreadyRetweeted(err) || twilter.IsRetweetNotPermitted(err) {
 				// retweet failed. but skip this tweet.
@@ -157,4 +204,3 @@ func (t *Task) Exec(ctx context.Context) {
 		}
 	}
 }
-

@@ -1,6 +1,12 @@
 package twilter
 
-import "github.com/dghubble/go-twitter/twitter"
+import (
+	"github.com/dghubble/go-twitter/twitter"
+	"log"
+	"net/http"
+	"strconv"
+	"time"
+)
 
 // https://developer.twitter.com/en/docs/basics/response-codes.html
 const (
@@ -30,4 +36,25 @@ func IsRetweetNotPermitted(err error) bool {
 		}
 	}
 	return false
+}
+
+func IsRateLimit(resp *http.Response) (limited bool, sleep time.Duration) {
+	// Twitter API returns 403, 420, 429 http status code when rate limited.
+	// https://developer.twitter.com/en/docs/basics/response-codes.html
+	code := resp.StatusCode
+	if code == 403 || code == 420 || code == 429 {
+		remain := resp.Header.Get("X-Rate-Limit-Remaining")
+		resetStr := resp.Header.Get("X-Rate-Limit-Reset")
+		if remain == "0" && resetStr != "" {
+			// this request is rate limited.
+			resetInt, err := strconv.ParseInt(resetStr, 10, 64)
+			if err != nil {
+				log.Println("failed to parse X-Rate-Limit-Reset : ", err)
+				return false, 0
+			}
+			resetTime := time.Unix(resetInt, 0)
+			return true, resetTime.Sub(time.Now())
+		}
+	}
+	return false, 0
 }
