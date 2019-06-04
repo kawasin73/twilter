@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
 	"github.com/go-redis/redis"
 	"github.com/kawasin73/htask"
@@ -45,6 +46,24 @@ func setupRedis(redisUrl string) (*redis.Client, error) {
 	return redisClient, nil
 }
 
+// checkTwitterCredentials check credentials is valid.
+func checkTwitterCredentials(ctx context.Context, config *oauth1.Config, token *oauth1.Token) error {
+	httpClient := config.Client(ctx, token)
+	client := twitter.NewClient(httpClient)
+	trueValue := true
+	falseValue := false
+	_, resp, err := client.Accounts.VerifyCredentials(&twitter.AccountVerifyParams{
+		IncludeEntities: &falseValue,
+		IncludeEmail:    &falseValue,
+		SkipStatus:      &trueValue,
+	})
+	// twitter.APIError is not reliable when error response body format from twitter is not valid.
+	if err == nil && resp.StatusCode >= 300 {
+		err = fmt.Errorf("request to verify credentials : %v", resp.Status)
+	}
+	return err
+}
+
 func main() {
 	var (
 		consumerKey    = os.Getenv("TWITTER_CONSUMER_KEY")
@@ -60,7 +79,6 @@ func main() {
 	flagFallback := flag.Int("fallback", 10, "start filtering tweets fallback minutes ago if no checkpoint (minutes)")
 	flagTimeout := flag.Int("timeout", 5, "timeout for each monitoring + retweet loop (minutes)")
 	flag.Var(flagTargets, "target", "list of targets. target format = \"<screen_name>:<filter>[/<filter>]\"  filter format = \"<filter_name>[(<attribute>[,<attribute>])]\"")
-	flagRedis := flag.String("redis", "", "redis url (optional)")
 
 	flag.Parse()
 
@@ -68,7 +86,10 @@ func main() {
 	interval := time.Duration(*flagInterval) * time.Minute
 	fallback := time.Duration(*flagFallback) * time.Minute
 	timeout := time.Duration(*flagTimeout) * time.Minute
-	_ = flagRedis
+	if len(flagTargets) == 0 {
+		log.Println("target must not be empty")
+		return
+	}
 
 	// setup wait group
 	var wg sync.WaitGroup
@@ -78,18 +99,24 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// create twitter auth context
+	config := oauth1.NewConfig(consumerKey, consumerSecret)
+	token := oauth1.NewToken(accessToken, accessSecret)
+	// check credentials
+	if err := checkTwitterCredentials(ctx, config, token); err != nil {
+		log.Println("failed to verify twitter credentials :", err)
+		return
+	}
+
 	// setup redis client
 	redisClient, err := setupRedis(redisUrl)
 	if err != nil {
-		log.Panic("failed to setup redis client :", err)
+		log.Println("failed to setup redis client :", err)
+		return
 	} else if redisClient != nil {
 		log.Println("redis is enabled")
 		defer redisClient.Close()
 	}
-
-	// create twitter auth context
-	config := oauth1.NewConfig(consumerKey, consumerSecret)
-	token := oauth1.NewToken(accessToken, accessSecret)
 
 	// setup scheduler
 	sche := htask.NewScheduler(&wg, 0)
