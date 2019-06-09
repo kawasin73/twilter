@@ -14,9 +14,52 @@ func unwrapArgs(args string) (string, error) {
 	return args[1 : len(args)-1], nil
 }
 
+func splitArgs(args string, sep string) ([]string, error) {
+	if len(args) == 0 {
+		// empty argument
+		return nil, nil
+	}
+
+	var values []string
+	var depth, head int
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case sep[0]:
+			if depth == 0 {
+				if args[i:i+len(sep)] == sep {
+					// split argument
+					values = append(values, args[head:i])
+					i += len(sep) - 1
+					head = i + 1
+				}
+			}
+
+		case '(':
+			depth++
+
+		case ')':
+			depth--
+			if depth < 0 {
+				return nil, fmt.Errorf("too many \")\" : \"%v\"", args[i:])
+			}
+		}
+	}
+	if depth != 0 {
+		return nil, fmt.Errorf("too many \"(\"")
+	}
+
+	// add last argument
+	values = append(values, args[head:])
+
+	return values, nil
+}
+
 func parseFilters(value string, sep string) ([]twilter.Filter, error) {
 	// parse multi filters separated by sep
-	values := strings.Split(value, sep)
+	values, err := splitArgs(value, sep)
+	if err != nil {
+		return nil, err
+	}
 	var filters []twilter.Filter
 	for _, v := range values {
 		filter, err := parseFilter(v)
