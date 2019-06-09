@@ -76,7 +76,7 @@ func parseFilter(value string) (twilter.Filter, error) {
 		} else if filters, err := parseFilters(args, ","); err != nil {
 			return nil, err
 		} else {
-			return twilter.AndFilter{filters}, nil
+			return twilter.OrFilter{filters}, nil
 		}
 
 	default:
